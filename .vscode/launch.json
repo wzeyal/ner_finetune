@@ -1,0 +1,54 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+      {
+        "name": "Python: Current File",
+        "type": "python",
+        "request": "launch",
+        // "program": "${file}",
+        "program": "./app.py",
+        "console": "integratedTerminal",
+        "env": {},
+        "stopOnEntry": false,
+        "cwd": "${workspaceFolder}",
+        "envFile": "${workspaceFolder}/.env",
+        "args": [],
+        "showReturnValue": false,
+        "redirectOutput": false,
+        "internalConsoleOptions": "neverOpen"
+      },
+      {
+        "name": "Python: Module",
+        "type": "python",
+        "request": "launch",
+        "program": "${file}",
+        "console": "integratedTerminal",
+        "env": {},
+        "cwd": "${workspaceFolder}",
+        "envFile": "${workspaceFolder}/.env",
+        "args": [
+          "-m",
+          "your_module_name"
+        ],
+        "stopOnEntry": false,
+        "showReturnValue": false,
+        "redirectOutput": false,
+        "internalConsoleOptions": "neverOpen"
+      },
+      {
+        "name": "Python: Attach",
+        "type": "python",
+        "request": "attach",
+        "port": 3000,
+        "host": "localhost",
+        "pathMappings": [
+          {
+            "localRoot": "${workspaceFolder}",
+            "remoteRoot": "."
+          }
+        ],
+        "internalConsoleOptions": "neverOpen"
+      }
+    ]
+  }
+  

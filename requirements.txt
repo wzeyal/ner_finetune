@@ -1,0 +1,6 @@
+datasets
+numpy
+transformers[torch]
+torch
+seqeval
+tensorboard
