@@ -5,3 +5,7 @@ torch
 seqeval
 tensorboard
 seaborn
+spacy
+markdownify
+html2text
+ipymarkup
