@@ -195,10 +195,11 @@ def main():
         per_device_train_batch_size=8,
         gradient_accumulation_steps=4, 
         per_device_eval_batch_size=4, 
-        num_train_epochs=1, 
+        num_train_epochs=3, 
         weight_decay=0.01,
         report_to="tensorboard",
         load_best_model_at_end=True,
+        metric_for_best_model="f1",
     ) 
     
     data_collator = DataCollatorForTokenClassification(tokenizer) 
@@ -219,61 +220,63 @@ def main():
     
     print(trainer.state)
     
-    from transformers import pipeline
+    trainer.evaluate()
     
-    model.eval()
+    # from transformers import pipeline
     
-    pipe = pipeline(task="ner", model=model.to("cpu"), tokenizer=tokenizer, aggregation_strategy="average")
+    # model.eval()
     
-    example = "This is a test sentence of bill gates"
+    # pipe = pipeline(task="ner", model=model.to("cpu"), tokenizer=tokenizer, aggregation_strategy="average")
     
-    ner_results = pipe(example)
+    # example = "This is a test sentence of bill gates"
     
-    def ner_results_to_markdown(results):
-        markdown_content = ""
-        for result in results:
+    # ner_results = pipe(example)
+    
+    # def ner_results_to_markdown(results):
+    #     markdown_content = ""
+    #     for result in results:
             
-            entity_text = result["word"]
-            entity_label = result["entity_group"]
+    #         entity_text = result["word"]
+    #         entity_label = result["entity_group"]
             
-            if entity_label == "O":
-                markdown_content += f"{entity_text}"
-            else:
-                # Format label in bold
-                formatted_entity = f"**{entity_label}**"
+    #         if entity_label == "O":
+    #             markdown_content += f"{entity_text}"
+    #         else:
+    #             # Format label in bold
+    #             formatted_entity = f"**{entity_label}**"
 
-                # Append to the Markdown content
-                markdown_content += f"{formatted_entity}: {entity_text}"
+    #             # Append to the Markdown content
+    #             markdown_content += f"{formatted_entity}: {entity_text}"
             
-            markdown_content += " "
+    #         markdown_content += " "
 
-        return markdown_content
+    #     return markdown_content
     
-    markdown = ner_results_to_markdown(ner_results)
+    # markdown = ner_results_to_markdown(ner_results)
     
-    writer.add_text("NER", markdown)
+    # writer.add_text("NER", markdown)
     
-    from ipymarkup import show_ascii_markup, show_span_box_markup
-    spans = [(ner_result['start'], ner_result['end'], ner_result['entity_group']) for ner_result in ner_results]
+    # from ipymarkup import show_ascii_markup, show_span_box_markup
+    # spans = [(ner_result['start'], ner_result['end'], ner_result['entity_group']) for ner_result in ner_results]
     
-    import io
-    import sys
-    output_buffer = io.StringIO()
-    sys.stdout = output_buffer
+    # import io
+    # import sys
+    # output_buffer = io.StringIO()
+    # sys.stdout = output_buffer
 
 
-    show_ascii_markup(example, spans)
+    # show_ascii_markup(example, spans)
     
-    captured_output = output_buffer.getvalue()
+    # captured_output = output_buffer.getvalue()
     
-    captured_output = captured_output.replace('\n', '\r\n\n')
+    # captured_output = captured_output.replace('\n', '\r\n\n')
 
     
-    writer.add_text("ipymarkup", captured_output)
+    # writer.add_text("ipymarkup", captured_output)
     
-    from PIL import Image, ImageDraw, ImageFont
+    # from PIL import Image, ImageDraw, ImageFont
 
-    sys.stdout = sys.__stdout__
+    # sys.stdout = sys.__stdout__
 
 
 
