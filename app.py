@@ -17,6 +17,24 @@ def log_to_tensorboard(metrics, step):
     for key, value in metrics.items():
         writer.add_scalar(key, value, step)
         
+def calculate_confusion_matrix(pred_tags, true_tags, labels):
+    # Initialize a square matrix filled with zeros
+    num_labels = len(labels)
+    confusion_matrix = [[0] * num_labels for _ in range(num_labels)]
+
+    # Iterate through each instance
+    for pred_instance, true_instance in zip(pred_tags, true_tags):
+        # Iterate through each pair of predicted and true labels
+        for pred_label, true_label in zip(pred_instance, true_instance):
+            # Find the indices of the labels in the label list
+            pred_index = labels.index(pred_label)
+            true_index = labels.index(true_label)
+
+            # Increment the corresponding entry in the confusion matrix
+            confusion_matrix[true_index][pred_index] += 1
+
+    return confusion_matrix
+        
 
 def tokenize_and_align_labels(examples, tokenizer, label_all_tokens=True): 
     """
@@ -67,21 +85,20 @@ def tokenize_and_align_labels(examples, tokenizer, label_all_tokens=True):
     tokenized_inputs["labels"] = labels 
     return tokenized_inputs
 
-def calculate_confusion_matrix(true_labels, predicted_labels, labels):
-    # Create a set of unique labels
-    unique_labels = labels
+def confusion_matrix_to_tensor(conf_matrix):
+    fig, ax = plt.subplots()
+    im = ax.imshow(conf_matrix, interpolation='nearest', cmap=plt.cm.Blues)
+    fig.colorbar(im)
+    
+    # Convert the plot to a torch.Tensor
+    fig.canvas.draw()
+    image_from_plot = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
+    image_from_plot = image_from_plot.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+    tensor_image = torch.from_numpy(image_from_plot).permute(2, 0, 1).float() / 255.0
+    plt.close()
 
-    # Initialize the confusion matrix as a NumPy array of zeros
-    confusion_matrix = [[0] * len(unique_labels) for _ in range(len(unique_labels))]
+    return tensor_image
 
-    # Create a mapping from labels to indices
-    label_to_index = {label: i for i, label in enumerate(unique_labels)}
-
-    # Populate the confusion matrix
-    for true_label, pred_label in zip(true_labels, predicted_labels):
-        true_index = label_to_index[true_label]
-        pred_index = label_to_index[pred_label]
-        confusion_matrix[true_index][pred_index] += 1
 
 def compute_metrics(eval_preds, label_list, metric, epoch): 
     """
@@ -112,7 +129,12 @@ def compute_metrics(eval_preds, label_list, metric, epoch):
     ] 
     
    
-    cf_matrix = calculate_confusion_matrix(predictions, true_labels, label_list) 
+    conf_matrix = calculate_confusion_matrix(predictions, true_labels, label_list) 
+    tensor_image = confusion_matrix_to_tensor(conf_matrix)
+    writer.add_image("Confusion Matrix", tensor_image, epoch)
+
+
+
     # df_cm = pd.DataFrame(cf_matrix / np.sum(cf_matrix, axis=1)[:, None], index=[i for i in label_list],
     #                      columns=[i for i in label_list])
     # plt.figure(figsize=(12, 7))    
