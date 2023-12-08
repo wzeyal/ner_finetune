@@ -6,8 +6,17 @@ from transformers import AutoModelForTokenClassification
 from transformers import TrainingArguments, Trainer 
 import torch
 from torch.utils.tensorboard import SummaryWriter
+from sklearn.metrics import confusion_matrix
+import pandas as pd
+import seaborn as sn
+import matplotlib.pyplot as plt
 
+writer = SummaryWriter()
 
+def log_to_tensorboard(metrics, step):
+    for key, value in metrics.items():
+        writer.add_scalar(key, value, step)
+        
 
 def tokenize_and_align_labels(examples, tokenizer, label_all_tokens=True): 
     """
@@ -56,9 +65,25 @@ def tokenize_and_align_labels(examples, tokenizer, label_all_tokens=True):
             previous_word_idx = word_idx 
         labels.append(label_ids) 
     tokenized_inputs["labels"] = labels 
-    return tokenized_inputs 
+    return tokenized_inputs
 
-def compute_metrics(eval_preds, label_list, metric): 
+def calculate_confusion_matrix(true_labels, predicted_labels, labels):
+    # Create a set of unique labels
+    unique_labels = labels
+
+    # Initialize the confusion matrix as a NumPy array of zeros
+    confusion_matrix = [[0] * len(unique_labels) for _ in range(len(unique_labels))]
+
+    # Create a mapping from labels to indices
+    label_to_index = {label: i for i, label in enumerate(unique_labels)}
+
+    # Populate the confusion matrix
+    for true_label, pred_label in zip(true_labels, predicted_labels):
+        true_index = label_to_index[true_label]
+        pred_index = label_to_index[pred_label]
+        confusion_matrix[true_index][pred_index] += 1
+
+def compute_metrics(eval_preds, label_list, metric, epoch): 
     """
     Function to compute the evaluation metrics for Named Entity Recognition (NER) tasks.
     The function computes precision, recall, F1 score and accuracy.
@@ -82,24 +107,32 @@ def compute_metrics(eval_preds, label_list, metric):
     ] 
     
     true_labels = [ 
-      [label_list[l] for (eval_preds, l) in zip(prediction, label) if l != -100] 
+      [label_list[l] for (_, l) in zip(prediction, label) if l != -100] 
        for prediction, label in zip(pred_logits, labels) 
-   ] 
+    ] 
+    
+   
+    cf_matrix = calculate_confusion_matrix(predictions, true_labels, label_list) 
+    # df_cm = pd.DataFrame(cf_matrix / np.sum(cf_matrix, axis=1)[:, None], index=[i for i in label_list],
+    #                      columns=[i for i in label_list])
+    # plt.figure(figsize=(12, 7))    
+    # writer.add_figure("Confusion matrix", sn.heatmap(df_cm, annot=True).get_figure(), epoch)
+    
     results = metric.compute(predictions=predictions, references=true_labels) 
-    return { 
-   "precision": results["overall_precision"], 
-   "recall": results["overall_recall"], 
-   "f1": results["overall_f1"], 
-  "accuracy": results["overall_accuracy"], 
-  } 
+    
+    result =  { 
+        "precision": results["overall_precision"], 
+        "recall": results["overall_recall"], 
+        "f1": results["overall_f1"], 
+        "accuracy": results["overall_accuracy"], 
+    } 
+    
+    log_to_tensorboard(result, epoch)
+    log_to_tensorboard(results['LOC'], epoch)
+    return result
 
 
 def main():
-    writer = SummaryWriter()
-    
-    for i in range(10):
-        writer.add_scalar('example_scalar', i * 2, global_step=i)
-
     conll2003 = datasets.load_dataset("conll2003") 
     
     tokenizer = BertTokenizerFast.from_pretrained("bert-base-uncased") 
@@ -111,16 +144,21 @@ def main():
     args = TrainingArguments( 
         "test-ner",
         evaluation_strategy = "epoch", 
+        save_strategy = "epoch",
         learning_rate=2e-5, 
-        per_device_train_batch_size=4, 
+        per_device_train_batch_size=8,
+        gradient_accumulation_steps=4, 
         per_device_eval_batch_size=4, 
-        num_train_epochs=3, 
+        num_train_epochs=2, 
         weight_decay=0.01,
-        report_to="tensorboard", 
+        report_to="tensorboard",
+        load_best_model_at_end=True,
     ) 
+    
     data_collator = DataCollatorForTokenClassification(tokenizer) 
     metric = datasets.load_metric("seqeval") 
     label_list = conll2003["train"].features["ner_tags"].feature.names 
+    
     trainer = Trainer( 
         model, 
         args, 
@@ -128,19 +166,54 @@ def main():
         eval_dataset=tokenized_datasets["validation"].select(range(100)), 
         data_collator=data_collator, 
         tokenizer=tokenizer, 
-        compute_metrics=lambda x: compute_metrics(x, label_list=label_list, metric=metric)
+        compute_metrics=lambda x: compute_metrics(x, label_list=label_list, metric=metric, epoch=trainer.state.epoch),
     )    
     
     trainer.train()
+    
+    print(trainer.state)
+    
+    # from transformers import pipeline
+    
+    # model.eval()
+    
+    # model = model.to('cpu')
+    
+    # ner_pipeline = pipeline("ner", model=model, tokenizer=tokenizer)
+    
+    # sentences = [" ".join(sentence["tokens"]) for sentence in tokenized_datasets["train"].select(range(100))]
+    
+    
+    # train_dataset = tokenized_datasets["train"].select(range(100))
+    # ner_labels = [label_list[l] for l in train_dataset['labels'] if l != -100]
+    
+    # cf_matrix = confusion_matrix(tokenized_datasets["train"]["labels"], tokenized_datasets["train"]["labels"])
+    
+    # print(cf_matrix)
+    # predications = ner_pipeline(sentences)
+    
+    # # calculate the confusion matrix
+    # print(predications)
+    
+
+        
+
+    
+    # # Access the computed metrics after training
+    # metrics = trainer.callback_metrics
+    # classification_report_str = metrics["classification_report"]
+    # print("Classification Report:")
+    # print(classification_report_str)
+    
+    # last_metrics = trainer.state.log_metrics
+    # conf_matrix = last_metrics["eval_confusion_matrix"]
+    # print(conf_matrix)
     
     metrics = trainer.evaluate()
     print(metrics)
     
     writer.close()
-
-
-
-        
+ 
 
 if __name__ == "__main__":
     main()

@@ -4,3 +4,4 @@ transformers[torch]
 torch
 seqeval
 tensorboard
+seaborn
