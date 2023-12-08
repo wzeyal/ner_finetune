@@ -273,7 +273,6 @@ def main():
     
     from PIL import Image, ImageDraw, ImageFont
 
-    
     sys.stdout = sys.__stdout__
 
 
