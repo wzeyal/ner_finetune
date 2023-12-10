@@ -21,34 +21,81 @@ def log_to_tensorboard(metrics, step):
         
 def flatten_tags(tags):
     return [tag[2:] if tag.startswith(("B-", "I-")) else tag for tag in tags]
+
+def flatten_bio_tags_with_index(bio_tags):
+  """
+  Flattens a list of Bio-NER tags to individual entity types with a running index.
+
+  Args:
+    bio_tags: A list of Bio-NER tag names.
+
+  Returns:
+    A list of entity type names with a running index appended.
+  """
+
+  flat_tags = []
+  running_index = 1
+  entity_type = None
+
+  for tag in bio_tags:
+    # Extract entity type from Bio-NER tag
+    new_entity_type = tag.split("-")[1] if "-" in tag else "O"
+
+    # Check for entity type change
+    if new_entity_type != entity_type:
+      entity_type = new_entity_type
+      running_index = 1  # Reset index for new entity
+
+    # Add entity type with index
+    flat_tags.append(f"{entity_type}-{running_index}")
+    running_index += 1
+
+
+def flatten_bio_tags_with_index(bio_tags):
+  """
+  Flattens a list of Bio-NER tags to individual entity types with a running index.
+
+  Args:
+    bio_tags: A list of Bio-NER tag names.
+
+  Returns:
+    A list of flat entity type
+  """
+
+  flat_tags = []
+  
+  for tag in bio_tags:
+    # Extract entity type from Bio-NER tag
+    new_entity_type = tag.split("-")[1] if "-" in tag else "O"
+    if new_entity_type not in flat_tags:
+      flat_tags.append(new_entity_type)
+
+  return flat_tags
         
-def calculate_confusion_matrix(pred_tags, true_tags, labels):
-    
-    # Initialize a square matrix filled with zeros
-    num_labels = len(labels)
-    confusion_matrix = [[0] * num_labels for _ in range(num_labels)]
+def calculate_confusion_matrix(true_tags, pred_tags, fatten_labels):
+    """
+    Calculates the confusion matrix for a given set of true and predicted NER tags.
 
-    # Iterate through each instance
-    for pred_instance, true_instance in zip(pred_tags, true_tags):
-        # Iterate through each pair of predicted and true labels
-        for pred_label, true_label in zip(pred_instance, true_instance):
-            # Find the indices of the labels in the label list
-            pred_index = labels.index(pred_label)
-            true_index = labels.index(true_label)
+    Args:
+        true_tags: A list of lists of true NER tags.
+        pred_tags: A list of lists of predicted NER tags.
+        label2id: A dictionary mapping NER labels to their IDs.
+        id2label: A dictionary mapping NER IDs to their labels.
 
-            # Increment the corresponding entry in the confusion matrix
-            confusion_matrix[true_index][pred_index] += 1
-            
-    # Normalize the confusion matrix
-    confusion_matrix = confusion_matrix.astype('float') / confusion_matrix.sum(axis=1)[:, np.newaxis]
+    Returns:
+        A confusion matrix as a 2D numpy array.
+    """
+    num_labels = len(fatten_labels)
+    confusion_matrix = np.zeros((num_labels, num_labels))
+    for true_tag_seq, pred_tag_seq in zip(true_tags, pred_tags):
+        for true_tag, pred_tag in zip(true_tag_seq, pred_tag_seq):
+            true_id = fatten_labels.index(true_tag.split('-')[-1])
+            pred_id = fatten_labels.index(pred_tag.split('-')[-1])
+            confusion_matrix[true_id, pred_id] += 1
+
+    # confusion_matrix = confusion_matrix.astype('float') / confusion_matrix.sum(axis=1)[:, np.newaxis]
 
     return confusion_matrix
-
-def calculate_percentage_confusion_matrix(conf_matrix):
-    conf_matrix_np = np.array(conf_matrix)
-    row_sums = conf_matrix_np.sum(axis=1, keepdims=True)
-    percentage_conf_matrix = conf_matrix_np / row_sums
-    return math.ceil(percentage_conf_matrix * 100)  # Multiply by 100 to get percentages
         
 
 def tokenize_and_align_labels(examples, tokenizer, label_all_tokens=True): 
@@ -106,11 +153,9 @@ def confusion_matrix_to_tensor(conf_matrix, labels):
     # im = ax.imshow(conf_matrix, interpolation='nearest', cmap=plt.cm.Blues)
     # fig.colorbar(im)
     sns.set(font_scale=1.2)
-    sns.heatmap(conf_matrix, annot=True, fmt='d', cmap='Blues', xticklabels=labels, yticklabels=labels)
-    plt.xlabel('Predicted Labels')
-    plt.ylabel('True Labels')
-    # plt.xticks(rotation=0)
-
+    sns.heatmap(conf_matrix, annot=True, cmap='Blues', xticklabels=labels, yticklabels=labels)
+    plt.xlabel('True Labels')
+    plt.ylabel('Predicted Labels')
     plt.title('Confusion Matrix')
     
     # Convert the plot to a torch.Tensor
@@ -123,7 +168,7 @@ def confusion_matrix_to_tensor(conf_matrix, labels):
     return tensor_image
 
 
-def compute_metrics(eval_preds, label_list, metric, epoch): 
+def compute_metrics(eval_preds, bios_label_list, metric, epoch): 
     """
     Function to compute the evaluation metrics for Named Entity Recognition (NER) tasks.
     The function computes precision, recall, F1 score and accuracy.
@@ -142,19 +187,21 @@ def compute_metrics(eval_preds, label_list, metric, epoch):
     
     # We remove all the values where the label is -100
     predictions = [ 
-        [label_list[eval_preds] for (eval_preds, l) in zip(prediction, label) if l != -100] 
+        [bios_label_list[eval_preds] for (eval_preds, l) in zip(prediction, label) if l != -100] 
         for prediction, label in zip(pred_logits, labels) 
     ] 
     
     true_labels = [ 
-      [label_list[l] for (_, l) in zip(prediction, label) if l != -100] 
+      [bios_label_list[l] for (_, l) in zip(prediction, label) if l != -100] 
        for prediction, label in zip(pred_logits, labels) 
     ] 
     
+    flatten_labels = flatten_bio_tags_with_index(bios_label_list)
+    
    
-    conf_matrix = calculate_confusion_matrix(predictions, true_labels, label_list) 
+    conf_matrix = calculate_confusion_matrix(predictions, true_labels, flatten_labels) 
     # conf_matrix = calculate_percentage_confusion_matrix(conf_matrix)
-    tensor_image = confusion_matrix_to_tensor(conf_matrix, label_list)
+    tensor_image = confusion_matrix_to_tensor(conf_matrix, flatten_labels)
     writer.add_image("Confusion Matrix", tensor_image, epoch)
 
 
@@ -216,11 +263,11 @@ def main():
     trainer = Trainer( 
         model, 
         args, 
-        train_dataset=tokenized_datasets["validation"].select(range(50)), 
-        eval_dataset=tokenized_datasets["validation"].select(range(50)), 
+        train_dataset=tokenized_datasets["train"].select(range(1)), 
+        eval_dataset=tokenized_datasets["train"].select(range(1)), 
         data_collator=data_collator, 
         tokenizer=tokenizer, 
-        compute_metrics=lambda x: compute_metrics(x, label_list=label_list, metric=metric, epoch=trainer.state.epoch),
+        compute_metrics=lambda x: compute_metrics(x, bios_label_list=label_list, metric=metric, epoch=trainer.state.epoch),
     )    
     
     trainer.train()
