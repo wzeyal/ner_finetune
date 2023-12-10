@@ -19,7 +19,11 @@ def log_to_tensorboard(metrics, step):
     for key, value in metrics.items():
         writer.add_scalar(key, value, step)
         
+def flatten_tags(tags):
+    return [tag[2:] if tag.startswith(("B-", "I-")) else tag for tag in tags]
+        
 def calculate_confusion_matrix(pred_tags, true_tags, labels):
+    
     # Initialize a square matrix filled with zeros
     num_labels = len(labels)
     confusion_matrix = [[0] * num_labels for _ in range(num_labels)]
@@ -34,6 +38,9 @@ def calculate_confusion_matrix(pred_tags, true_tags, labels):
 
             # Increment the corresponding entry in the confusion matrix
             confusion_matrix[true_index][pred_index] += 1
+            
+    # Normalize the confusion matrix
+    confusion_matrix = confusion_matrix.astype('float') / confusion_matrix.sum(axis=1)[:, np.newaxis]
 
     return confusion_matrix
 
