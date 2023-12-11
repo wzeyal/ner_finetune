@@ -325,7 +325,11 @@ def main():
     from transformers import pipeline
     ner_pipeline = pipeline("ner", model=model, tokenizer=tokenizer, aggregation_strategy="average")
 
-    df = pd.DataFrame({'sentence': ["This is a test sentence", 'This is another test sentence', ]})
+    # df = pd.DataFrame({'sentence': ["This is a test sentence", 'This is another test sentence', ]})
+    
+    df = eval_dataset.to_pandas()
+    df['sentence'] = df['tokens'].apply(" ".join)
+
     df['ner_results'] = df['sentence'].apply(lambda text: ner_pipeline(text))
     df['ents'] = df['ner_results'].apply(
         lambda ner_results: [
@@ -345,7 +349,7 @@ def main():
         , axis=1
     )
     
-    df['spacy_html'] = df['spacy_format'].apply(lambda spacy_format: displacy.render(spacy_format, style="ent", manual=True))
+    df['spacy_html'] = df['spacy_format'].apply(lambda spacy_format: displacy.render(spacy_format, style="ent", manual=True, page=True))
     
     # sample_df = df.iloc[0]
     # spacy_format = {
@@ -354,7 +358,8 @@ def main():
     # }
     
     for index, row in df.iterrows():
-        rtl_html = row['spacy_html'].replace('ltr', 'rtl')
+        rtl_html = row['spacy_html'].replace('ltr', 'ltr')
+        experiment.log_html(f"<h2>Sample {index}</h2>")
         experiment.log_html(rtl_html)
         experiment.log_html("<hr>")
 
