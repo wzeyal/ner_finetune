@@ -1,3 +1,5 @@
+import io
+import comet_ml 
 import json
 import math
 import datasets 
@@ -14,8 +16,15 @@ import seaborn as sn
 import matplotlib.pyplot as plt
 import seaborn as sns
 from seqeval.metrics import f1_score, precision_score, recall_score, accuracy_score
+from PIL import Image
+from spacy import displacy
 
 
+experiment = comet_ml.Experiment(
+  api_key="NgggnOHlNpfBbDkrtyEDzFRQt",
+  project_name="ner",
+  workspace="wzeyal"
+)
 
 writer = SummaryWriter()
 
@@ -95,9 +104,10 @@ def calculate_confusion_matrix(true_tags, pred_tags, fatten_labels):
         for true_tag, pred_tag in zip(true_tag_seq, pred_tag_seq):
             true_id = fatten_labels.index(true_tag.split('-')[-1])
             pred_id = fatten_labels.index(pred_tag.split('-')[-1])
-            confusion_matrix[true_id, pred_id] += 1
+            confusion_matrix[pred_id, true_id] += 1
 
     # confusion_matrix = confusion_matrix.astype('float') / confusion_matrix.sum(axis=1)[:, np.newaxis]
+    # experiment.log_confusion_matrix(true_tags, pred_tags, title="comet_ml_confusion_matrix")
 
     return confusion_matrix
         
@@ -158,18 +168,20 @@ def confusion_matrix_to_tensor(conf_matrix, labels, fmt=",.0f"):
     # fig.colorbar(im)
     sns.set(font_scale=1.2)
     sns.heatmap(conf_matrix, annot=True, fmt=fmt, cmap='Blues', xticklabels=labels, yticklabels=labels)
-    plt.xlabel('True Labels')
-    plt.ylabel('Predicted Labels')
+    plt.xlabel('Predicted')
+    plt.ylabel('True')
     plt.title('Confusion Matrix')
     
-    # Convert the plot to a torch.Tensor
-    fig.canvas.draw()
-    image_from_plot = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
-    image_from_plot = image_from_plot.reshape(fig.canvas.get_width_height()[::-1] + (3,))
-    tensor_image = torch.from_numpy(image_from_plot).permute(2, 0, 1).float() / 255.0
-    plt.close()
+    fig = plt.gcf()
+    
+    buffer = io.BytesIO()
+    fig.savefig(buffer, format="png")
+    buffer.seek(0)
+    img = Image.open(buffer)
+    img_array = np.array(img) / 255.0  # Normalize to [0, 1]
+    img_tensor = torch.from_numpy(img_array).permute(2, 0, 1).float()
 
-    return tensor_image
+    return img_tensor
 
 
 def compute_metrics(eval_preds, bios_label_list, epoch, is_calculate_confusion_matrix=True): 
@@ -238,6 +250,7 @@ def compute_metrics(eval_preds, bios_label_list, epoch, is_calculate_confusion_m
 
 
 def main():
+    # experiment.log_text("Experiment Name", "test-ner")
     conll2003 = datasets.load_dataset("conll2003") 
     label_list = conll2003["train"].features["ner_tags"].feature.names
     
@@ -261,7 +274,7 @@ def main():
         per_device_train_batch_size=8,
         gradient_accumulation_steps=4, 
         per_device_eval_batch_size=4, 
-        num_train_epochs=15, 
+        num_train_epochs=3, 
         weight_decay=0.01,
         report_to="tensorboard",
         load_best_model_at_end=True,
@@ -274,7 +287,7 @@ def main():
     eval_dataset = tokenized_datasets["validation"]
     
     train_dataset = tokenized_datasets["train"].select(range(50))
-    eval_dataset = tokenized_datasets["train"].select(range(1))
+    eval_dataset = tokenized_datasets["validation"].select(range(5))
     
     trainer = Trainer( 
         model, 
@@ -288,7 +301,7 @@ def main():
     
     trainer.train()
     
-    best_metric = print(trainer.state.best_metric)
+    best_metric = trainer.state.best_metric
     
     evalulate_metric = trainer.evaluate()
     
@@ -306,12 +319,52 @@ def main():
         tensor_image = confusion_matrix_to_tensor(normalized_conf_matrix, flatten_labels, ".0%")
         writer.add_image("Normalized Matrix", tensor_image)
         
-    
-    # Evaluate the model
-    predictions, labels, _ = trainer.predict(eval_dataset)
+        experiment.log_confusion_matrix(matrix=conf_matrix, labels=flatten_labels)
+        experiment.log_confusion_matrix(matrix=normalized_conf_matrix, labels=flatten_labels)
+        
+    from transformers import pipeline
+    ner_pipeline = pipeline("ner", model=model, tokenizer=tokenizer, aggregation_strategy="average")
 
-    compute_metrics((predictions, labels), label_list, epoch=None, plot_confusion_matrix=True)
+    df = pd.DataFrame({'sentence': ["This is a test sentence", 'This is another test sentence', ]})
+    df['ner_results'] = df['sentence'].apply(lambda text: ner_pipeline(text))
+    df['ents'] = df['ner_results'].apply(
+        lambda ner_results: [
+            {
+                'start': ent['start'], 
+                'end': ent['end'],
+                'label': ent['entity_group']
+            }
+            for ent in ner_results
+        ]
+    )
+    df['spacy_format'] = df.apply(lambda row:
+        {
+            'text': row['sentence'],
+            'ents': row['ents'],
+        }
+        , axis=1
+    )
     
+    df['spacy_html'] = df['spacy_format'].apply(lambda spacy_format: displacy.render(spacy_format, style="ent", manual=True))
+    
+    # sample_df = df.iloc[0]
+    # spacy_format = {
+    #     'text': sample_df['sentence'],
+    #     'ents': sample_df['ents'],
+    # }
+    
+    for index, row in df.iterrows():
+        rtl_html = row['spacy_html'].replace('ltr', 'rtl')
+        experiment.log_html(rtl_html)
+        experiment.log_html("<hr>")
+
+    
+    
+    
+    # html = displacy.render(spacy_format, style="ent", manual=True)
+    # print(html)
+    pass
+
 
 if __name__ == "__main__":
     main()
