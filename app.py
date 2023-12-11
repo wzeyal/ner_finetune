@@ -7,11 +7,14 @@ from transformers import AutoModelForTokenClassification
 from transformers import TrainingArguments, Trainer 
 import torch
 from torch.utils.tensorboard import SummaryWriter
-from sklearn.metrics import confusion_matrix
+from sklearn.metrics import classification_report, confusion_matrix
 import pandas as pd
 import seaborn as sn
 import matplotlib.pyplot as plt
 import seaborn as sns
+from seqeval.metrics import f1_score, precision_score, recall_score, accuracy_score
+
+
 
 writer = SummaryWriter()
 
@@ -147,13 +150,13 @@ def tokenize_and_align_labels(examples, tokenizer, label_all_tokens=True):
     tokenized_inputs["labels"] = labels 
     return tokenized_inputs
 
-def confusion_matrix_to_tensor(conf_matrix, labels):
+def confusion_matrix_to_tensor(conf_matrix, labels, fmt=",.0f"):
     # fig, _ = plt.subplots()
     fig = plt.figure(figsize=(10, 10))
     # im = ax.imshow(conf_matrix, interpolation='nearest', cmap=plt.cm.Blues)
     # fig.colorbar(im)
     sns.set(font_scale=1.2)
-    sns.heatmap(conf_matrix, annot=True, cmap='Blues', xticklabels=labels, yticklabels=labels)
+    sns.heatmap(conf_matrix, annot=True, fmt=fmt, cmap='Blues', xticklabels=labels, yticklabels=labels)
     plt.xlabel('True Labels')
     plt.ylabel('Predicted Labels')
     plt.title('Confusion Matrix')
@@ -168,7 +171,7 @@ def confusion_matrix_to_tensor(conf_matrix, labels):
     return tensor_image
 
 
-def compute_metrics(eval_preds, bios_label_list, metric, epoch): 
+def compute_metrics(eval_preds, bios_label_list, epoch, plot_confusion_matrix=False): 
     """
     Function to compute the evaluation metrics for Named Entity Recognition (NER) tasks.
     The function computes precision, recall, F1 score and accuracy.
@@ -196,32 +199,38 @@ def compute_metrics(eval_preds, bios_label_list, metric, epoch):
        for prediction, label in zip(pred_logits, labels) 
     ] 
     
-    flatten_labels = flatten_bio_tags_with_index(bios_label_list)
+    if plot_confusion_matrix:
+        flatten_labels = flatten_bio_tags_with_index(bios_label_list)
     
-   
-    conf_matrix = calculate_confusion_matrix(predictions, true_labels, flatten_labels) 
-    # conf_matrix = calculate_percentage_confusion_matrix(conf_matrix)
-    tensor_image = confusion_matrix_to_tensor(conf_matrix, flatten_labels)
-    writer.add_image("Confusion Matrix", tensor_image, epoch)
-
-
-
-    # df_cm = pd.DataFrame(cf_matrix / np.sum(cf_matrix, axis=1)[:, None], index=[i for i in label_list],
-    #                      columns=[i for i in label_list])
-    # plt.figure(figsize=(12, 7))    
-    # writer.add_figure("Confusion matrix", sn.heatmap(df_cm, annot=True).get_figure(), epoch)
+        conf_matrix = calculate_confusion_matrix(predictions, true_labels, flatten_labels).astype('float') 
+        
+        # norm_conf = conf_matrix.astype('float') / conf_matrix.sum(axis=1)[:, np.newaxis]
+        normalized_conf_matrix = conf_matrix / (conf_matrix.sum(axis=0, keepdims=True) + 1e-8)
+        
+        tensor_image = confusion_matrix_to_tensor(conf_matrix, flatten_labels)
+        writer.add_image("Confusion Matrix", tensor_image, epoch)
+        
+        tensor_image = confusion_matrix_to_tensor(normalized_conf_matrix, flatten_labels, ".0%")
+        writer.add_image("Normalized Matrix", tensor_image, epoch)
+        
+        # results = metric.compute(predictions=predictions, references=true_labels) 
+        # report = classification_report(predictions, true_labels, target_names=bios_label_list, output_dict=True)
     
-    results = metric.compute(predictions=predictions, references=true_labels) 
-    
+    f1 = f1_score(true_labels, predictions)
+    precision = precision_score(true_labels, predictions)
+    recall = recall_score(true_labels, predictions)
+    accuracy = accuracy_score(true_labels, predictions)
+
+    # return report
     result =  { 
-        "precision": results["overall_precision"], 
-        "recall": results["overall_recall"], 
-        "f1": results["overall_f1"], 
-        "accuracy": results["overall_accuracy"], 
+        "precision": precision, 
+        "recall": recall, 
+        "f1": f1, 
+        "accuracy": accuracy, 
     } 
     
     log_to_tensorboard(result, epoch)
-    log_to_tensorboard(results['LOC'], epoch)
+    # log_to_tensorboard(results['LOC'], epoch)
     return result
 
 
@@ -249,7 +258,7 @@ def main():
         per_device_train_batch_size=8,
         gradient_accumulation_steps=4, 
         per_device_eval_batch_size=4, 
-        num_train_epochs=3, 
+        num_train_epochs=15, 
         weight_decay=0.01,
         report_to="tensorboard",
         load_best_model_at_end=True,
@@ -257,156 +266,32 @@ def main():
     ) 
     
     data_collator = DataCollatorForTokenClassification(tokenizer) 
-    metric = datasets.load_metric("seqeval") 
-    # label_list = conll2003["train"].features["ner_tags"].feature.names 
+    
+    # train_dataset = tokenized_datasets["train"].select(range(50))
+    # eval_dataset = tokenized_datasets["train"].select(range(1))
+    
+    train_dataset = tokenized_datasets["train"]
+    eval_dataset = tokenized_datasets["validation"]
     
     trainer = Trainer( 
         model, 
         args, 
-        train_dataset=tokenized_datasets["train"].select(range(1)), 
-        eval_dataset=tokenized_datasets["train"].select(range(1)), 
+        train_dataset=train_dataset, 
+        eval_dataset=eval_dataset, 
         data_collator=data_collator, 
         tokenizer=tokenizer, 
-        compute_metrics=lambda x: compute_metrics(x, bios_label_list=label_list, metric=metric, epoch=trainer.state.epoch),
+        compute_metrics=lambda x: compute_metrics(x, bios_label_list=label_list, epoch=trainer.state.epoch),
     )    
     
     trainer.train()
     
     print(trainer.state)
     
-    trainer.evaluate()
-    
-    # from transformers import pipeline
-    
-    # model.eval()
-    
-    # pipe = pipeline(task="ner", model=model.to("cpu"), tokenizer=tokenizer, aggregation_strategy="average")
-    
-    # example = "This is a test sentence of bill gates"
-    
-    # ner_results = pipe(example)
-    
-    # def ner_results_to_markdown(results):
-    #     markdown_content = ""
-    #     for result in results:
-            
-    #         entity_text = result["word"]
-    #         entity_label = result["entity_group"]
-            
-    #         if entity_label == "O":
-    #             markdown_content += f"{entity_text}"
-    #         else:
-    #             # Format label in bold
-    #             formatted_entity = f"**{entity_label}**"
+    # Evaluate the model
+    predictions, labels, _ = trainer.predict(eval_dataset)
 
-    #             # Append to the Markdown content
-    #             markdown_content += f"{formatted_entity}: {entity_text}"
-            
-    #         markdown_content += " "
-
-    #     return markdown_content
+    compute_metrics((predictions, labels), label_list, epoch=None, plot_confusion_matrix=True)
     
-    # markdown = ner_results_to_markdown(ner_results)
-    
-    # writer.add_text("NER", markdown)
-    
-    # from ipymarkup import show_ascii_markup, show_span_box_markup
-    # spans = [(ner_result['start'], ner_result['end'], ner_result['entity_group']) for ner_result in ner_results]
-    
-    # import io
-    # import sys
-    # output_buffer = io.StringIO()
-    # sys.stdout = output_buffer
-
-
-    # show_ascii_markup(example, spans)
-    
-    # captured_output = output_buffer.getvalue()
-    
-    # captured_output = captured_output.replace('\n', '\r\n\n')
-
-    
-    # writer.add_text("ipymarkup", captured_output)
-    
-    # from PIL import Image, ImageDraw, ImageFont
-
-    # sys.stdout = sys.__stdout__
-
-
-
-    
-    # print(ner_results)
-    
-    # from spacy import displacy
-    
-
-    
-    # ents = [
-    #     {
-    #         'start':    ner_result['start'],
-    #         'end':      ner_result['end'],
-    #         'label':    ner_result['entity_group'],
-    #     } for ner_result in ner_results
-    #     if ner_result["entity_group"]!= -100
-    # ]
-    
-    # doc_manual= {
-    #     'text': example,
-    #     'ents': ents,
-    # }
-    # html = displacy.render(doc_manual, style="ent", manual=True, page=True)
-    # writer.add_text("NER", html)
-    # print(html)
-    # import markdownify 
-
-    # h = markdownify.markdownify(html) 
-    # print(h)
-    
-    # import html2text
-    # converter = html2text.HTML2Text()
-    # converter.ignore_emphasis = True 
-    # h = converter.handle(html)
-    
-    
-    
-    # writer.add_text("NER", h)
-
-
-
-    
-    # sentences = [" ".join(sentence["tokens"]) for sentence in tokenized_datasets["train"].select(range(100))]
-    
-    
-    # train_dataset = tokenized_datasets["train"].select(range(100))
-    # ner_labels = [label_list[l] for l in train_dataset['labels'] if l != -100]
-    
-    # cf_matrix = confusion_matrix(tokenized_datasets["train"]["labels"], tokenized_datasets["train"]["labels"])
-    
-    # print(cf_matrix)
-    # predications = ner_pipeline(sentences)
-    
-    # # calculate the confusion matrix
-    # print(predications)
-    
-
-        
-
-    
-    # # Access the computed metrics after training
-    # metrics = trainer.callback_metrics
-    # classification_report_str = metrics["classification_report"]
-    # print("Classification Report:")
-    # print(classification_report_str)
-    
-    # last_metrics = trainer.state.log_metrics
-    # conf_matrix = last_metrics["eval_confusion_matrix"]
-    # print(conf_matrix)
-    
-    # metrics = trainer.evaluate()
-    # print(metrics)
-    
-    # writer.close()
- 
 
 if __name__ == "__main__":
     main()
