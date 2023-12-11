@@ -1,3 +1,4 @@
+import json
 import math
 import datasets 
 import numpy as np 
@@ -151,7 +152,7 @@ def tokenize_and_align_labels(examples, tokenizer, label_all_tokens=True):
     return tokenized_inputs
 
 def confusion_matrix_to_tensor(conf_matrix, labels, fmt=",.0f"):
-    # fig, _ = plt.subplots()
+    # fig, _ = plt.subplocalculate_confusion_matrixts()
     fig = plt.figure(figsize=(10, 10))
     # im = ax.imshow(conf_matrix, interpolation='nearest', cmap=plt.cm.Blues)
     # fig.colorbar(im)
@@ -171,7 +172,7 @@ def confusion_matrix_to_tensor(conf_matrix, labels, fmt=",.0f"):
     return tensor_image
 
 
-def compute_metrics(eval_preds, bios_label_list, epoch, plot_confusion_matrix=False): 
+def compute_metrics(eval_preds, bios_label_list, epoch, is_calculate_confusion_matrix=True): 
     """
     Function to compute the evaluation metrics for Named Entity Recognition (NER) tasks.
     The function computes precision, recall, F1 score and accuracy.
@@ -180,8 +181,9 @@ def compute_metrics(eval_preds, bios_label_list, epoch, plot_confusion_matrix=Fa
     eval_preds (tuple): A tuple containing the predicted logits and the true labels.
 
     Returns:
-    A dictionary containing the precision, recall, F1 score and accuracy.
+    A dictionary containing the precision, recall, F1 score, accuracy and the confusion matrix.
     """
+    conf_matrix = None
     pred_logits, labels = eval_preds 
     
     pred_logits = np.argmax(pred_logits, axis=2) 
@@ -199,22 +201,20 @@ def compute_metrics(eval_preds, bios_label_list, epoch, plot_confusion_matrix=Fa
        for prediction, label in zip(pred_logits, labels) 
     ] 
     
-    if plot_confusion_matrix:
+    if is_calculate_confusion_matrix:
         flatten_labels = flatten_bio_tags_with_index(bios_label_list)
     
         conf_matrix = calculate_confusion_matrix(predictions, true_labels, flatten_labels).astype('float') 
         
-        # norm_conf = conf_matrix.astype('float') / conf_matrix.sum(axis=1)[:, np.newaxis]
-        normalized_conf_matrix = conf_matrix / (conf_matrix.sum(axis=0, keepdims=True) + 1e-8)
+        # # norm_conf = conf_matrix.astype('float') / conf_matrix.sum(axis=1)[:, np.newaxis]
+        # normalized_conf_matrix = conf_matrix / (conf_matrix.sum(axis=0, keepdims=True) + 1e-8)
         
-        tensor_image = confusion_matrix_to_tensor(conf_matrix, flatten_labels)
-        writer.add_image("Confusion Matrix", tensor_image, epoch)
+        # tensor_image = confusion_matrix_to_tensor(conf_matrix, flatten_labels)
+        # writer.add_image("Confusion Matrix", tensor_image, epoch)
         
-        tensor_image = confusion_matrix_to_tensor(normalized_conf_matrix, flatten_labels, ".0%")
-        writer.add_image("Normalized Matrix", tensor_image, epoch)
+        # tensor_image = confusion_matrix_to_tensor(normalized_conf_matrix, flatten_labels, ".0%")
+        # writer.add_image("Normalized Matrix", tensor_image, epoch)
         
-        # results = metric.compute(predictions=predictions, references=true_labels) 
-        # report = classification_report(predictions, true_labels, target_names=bios_label_list, output_dict=True)
     
     f1 = f1_score(true_labels, predictions)
     precision = precision_score(true_labels, predictions)
@@ -226,10 +226,13 @@ def compute_metrics(eval_preds, bios_label_list, epoch, plot_confusion_matrix=Fa
         "precision": precision, 
         "recall": recall, 
         "f1": f1, 
-        "accuracy": accuracy, 
+        "accuracy": accuracy,
+        # 'confusion_matrix': conf_matrix,
     } 
     
     log_to_tensorboard(result, epoch)
+    result['confusion_matrix'] = conf_matrix.tolist()
+    # if 'LOC' in result.keys():
     # log_to_tensorboard(results['LOC'], epoch)
     return result
 
@@ -267,11 +270,11 @@ def main():
     
     data_collator = DataCollatorForTokenClassification(tokenizer) 
     
-    # train_dataset = tokenized_datasets["train"].select(range(50))
-    # eval_dataset = tokenized_datasets["train"].select(range(1))
-    
     train_dataset = tokenized_datasets["train"]
     eval_dataset = tokenized_datasets["validation"]
+    
+    train_dataset = tokenized_datasets["train"].select(range(50))
+    eval_dataset = tokenized_datasets["train"].select(range(1))
     
     trainer = Trainer( 
         model, 
@@ -285,7 +288,24 @@ def main():
     
     trainer.train()
     
-    print(trainer.state)
+    best_metric = print(trainer.state.best_metric)
+    
+    evalulate_metric = trainer.evaluate()
+    
+    if 'eval_confusion_matrix' in evalulate_metric.keys():
+        conf_matrix = evalulate_metric['eval_confusion_matrix']
+        conf_matrix = np.array(conf_matrix)
+        normalized_conf_matrix = conf_matrix / (conf_matrix.sum(axis=0, keepdims=True) + 1e-8)
+        print(normalized_conf_matrix)
+        
+        flatten_labels = flatten_bio_tags_with_index(label_list)
+        
+        tensor_image = confusion_matrix_to_tensor(conf_matrix, flatten_labels)
+        writer.add_image("Confusion Matrix", tensor_image)
+        
+        tensor_image = confusion_matrix_to_tensor(normalized_conf_matrix, flatten_labels, ".0%")
+        writer.add_image("Normalized Matrix", tensor_image)
+        
     
     # Evaluate the model
     predictions, labels, _ = trainer.predict(eval_dataset)
