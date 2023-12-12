@@ -183,6 +183,50 @@ def confusion_matrix_to_tensor(conf_matrix, labels, fmt=",.0f"):
 
     return img_tensor
 
+def confusion_matrix_bar_to_tensor(ner_confusion_matrix, labels):
+    # Calculate percentages
+    total_per_predicted = np.sum(ner_confusion_matrix, axis=0)
+    percentages = (ner_confusion_matrix / total_per_predicted) * 100
+
+    # Define entities
+    entities = labels
+
+    # Create a horizontal stacked bar plot with percentages and labels
+    fig, ax = plt.subplots(figsize=(10, 8))
+
+    # Plot the confusion matrix
+    bottom = np.zeros(len(entities))
+    for i, actual_label in enumerate(entities):
+        bars = ax.barh(entities, percentages[i, :], label=actual_label, left=bottom)
+        bottom += percentages[i, :]
+        
+        # Add labels to each bar if the percentage is above 10%
+        for bar, entity_label in zip(bars, entities):
+            percentage = percentages[i, entities.index(entity_label)]
+            if percentage > 10:
+                bar_label = f"{entity_label}\n{percentage:.1f}%"
+                ax.text(bar.get_x() + bar.get_width() / 2, bar.get_y() + bar.get_height() / 2, bar_label,
+                        ha='center', va='center', color='white', fontweight='bold')
+
+    # Set labels and ticks
+    ax.set_xlabel('Percentage')
+    ax.set_ylabel('Actual Labels')
+
+    # Set title
+    ax.set_title('NER Confusion Matrix - Horizontal Stacked Bar (Percentage)')
+
+    # Add legend
+    ax.legend()
+    
+    buffer = io.BytesIO()
+    fig.savefig(buffer, format="png")
+    buffer.seek(0)
+    img = Image.open(buffer)
+    img_array = np.array(img) / 255.0  # Normalize to [0, 1]
+    img_tensor = torch.from_numpy(img_array).permute(2, 0, 1).float()
+
+    return img_tensor
+
 
 def compute_metrics(eval_preds, bios_label_list, epoch, is_calculate_confusion_matrix=True): 
     """
@@ -318,6 +362,9 @@ def main():
         
         tensor_image = confusion_matrix_to_tensor(normalized_conf_matrix, flatten_labels, ".0%")
         writer.add_image("Normalized Matrix", tensor_image)
+        
+        tensor_image = confusion_matrix_bar_to_tensor(conf_matrix, flatten_labels)
+        writer.add_image("Confusion Bar Matrix", tensor_image)
         
         experiment.log_confusion_matrix(matrix=conf_matrix, labels=flatten_labels)
         experiment.log_confusion_matrix(matrix=normalized_conf_matrix, labels=flatten_labels)
