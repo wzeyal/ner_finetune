@@ -104,7 +104,7 @@ def calculate_confusion_matrix(true_tags, pred_tags, fatten_labels):
         for true_tag, pred_tag in zip(true_tag_seq, pred_tag_seq):
             true_id = fatten_labels.index(true_tag.split('-')[-1])
             pred_id = fatten_labels.index(pred_tag.split('-')[-1])
-            confusion_matrix[pred_id, true_id] += 1
+            confusion_matrix[true_id, pred_id] += 1
 
     # confusion_matrix = confusion_matrix.astype('float') / confusion_matrix.sum(axis=1)[:, np.newaxis]
     # experiment.log_confusion_matrix(true_tags, pred_tags, title="comet_ml_confusion_matrix")
@@ -185,26 +185,26 @@ def confusion_matrix_to_tensor(conf_matrix, labels, fmt=",.0f"):
 
 def confusion_matrix_bar_to_tensor(ner_confusion_matrix, labels):
     # Calculate percentages
-    total_per_predicted = np.sum(ner_confusion_matrix, axis=0)
-    percentages = (ner_confusion_matrix / total_per_predicted) * 100
+    total_per_actual = np.sum(ner_confusion_matrix, axis=1)
+    percentages = (ner_confusion_matrix.T / total_per_actual).T * 100
 
     # Define entities
     entities = labels
 
-    # Create a horizontal stacked bar plot with percentages and labels
+    # Create a horizontal stacked bar plot with percentages
     fig, ax = plt.subplots(figsize=(10, 8))
 
     # Plot the confusion matrix
     bottom = np.zeros(len(entities))
     for i, actual_label in enumerate(entities):
-        bars = ax.barh(entities, percentages[i, :], label=actual_label, left=bottom)
-        bottom += percentages[i, :]
+        bars = ax.barh(entities, percentages[:, i], label=actual_label, left=bottom)
+        bottom += percentages[:, i]
         
         # Add labels to each bar if the percentage is above 10%
         for bar, entity_label in zip(bars, entities):
-            percentage = percentages[i, entities.index(entity_label)]
+            percentage = percentages[entities.index(entity_label), i]
             if percentage > 10:
-                bar_label = f"{entity_label}\n{percentage:.1f}%"
+                bar_label = f"{entities[i]}\n{percentage:.1f}%"
                 ax.text(bar.get_x() + bar.get_width() / 2, bar.get_y() + bar.get_height() / 2, bar_label,
                         ha='center', va='center', color='white', fontweight='bold')
 
@@ -260,7 +260,14 @@ def compute_metrics(eval_preds, bios_label_list, epoch, is_calculate_confusion_m
     if is_calculate_confusion_matrix:
         flatten_labels = flatten_bio_tags_with_index(bios_label_list)
     
-        conf_matrix = calculate_confusion_matrix(predictions, true_labels, flatten_labels).astype('float') 
+        conf_matrix = calculate_confusion_matrix(true_labels, predictions, flatten_labels).astype('float') 
+        
+        conf_matrix = np.array([
+        [0., 3., 1., 1., 1.], # "O"
+       [0., 0., 0., 0., 0.],
+       [0., 0., 0., 0., 1.],
+       [0., 0., 0., 0., 0.],
+       [0., 2., 0., 0., 0.]])
         
         # # norm_conf = conf_matrix.astype('float') / conf_matrix.sum(axis=1)[:, np.newaxis]
         # normalized_conf_matrix = conf_matrix / (conf_matrix.sum(axis=0, keepdims=True) + 1e-8)
@@ -318,7 +325,7 @@ def main():
         per_device_train_batch_size=8,
         gradient_accumulation_steps=4, 
         per_device_eval_batch_size=4, 
-        num_train_epochs=3, 
+        num_train_epochs=2, 
         weight_decay=0.01,
         report_to="tensorboard",
         load_best_model_at_end=True,
@@ -330,8 +337,8 @@ def main():
     train_dataset = tokenized_datasets["train"]
     eval_dataset = tokenized_datasets["validation"]
     
-    train_dataset = tokenized_datasets["train"].select(range(50))
-    eval_dataset = tokenized_datasets["validation"].select(range(5))
+    train_dataset = tokenized_datasets["train"].select(range(1))
+    eval_dataset = tokenized_datasets["train"].select(range(1))
     
     trainer = Trainer( 
         model, 
