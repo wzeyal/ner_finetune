@@ -175,7 +175,7 @@ def confusion_matrix_to_tensor(conf_matrix, labels, fmt=",.0f"):
 
     return img_tensor
 
-def confusion_matrix_bar_to_tensor(ner_confusion_matrix, labels, percentage_threshold=5):
+def confusion_matrix_bar_to_figure(ner_confusion_matrix, labels, percentage_threshold=5):
     # Calculate percentages
     total_per_actual = np.sum(ner_confusion_matrix, axis=1)
     percentages = (ner_confusion_matrix.T / total_per_actual).T * 100
@@ -210,6 +210,8 @@ def confusion_matrix_bar_to_tensor(ner_confusion_matrix, labels, percentage_thre
     # Add legend
     ax.legend()
     
+    return plt.gcf()
+    
     buffer = io.BytesIO()
     fig.savefig(buffer, format="png")
     buffer.seek(0)
@@ -220,7 +222,7 @@ def confusion_matrix_bar_to_tensor(ner_confusion_matrix, labels, percentage_thre
     return img_tensor
 
 
-def compute_metrics(eval_preds, bios_label_list): 
+def compute_metrics(eval_preds, bios_label_list, experiment : comet_ml.Experiment): 
     """
     Function to compute the evaluation metrics for Named Entity Recognition (NER) tasks.
     The function computes precision, recall, F1 score and accuracy.
@@ -252,7 +254,7 @@ def compute_metrics(eval_preds, bios_label_list):
 
     flatten_labels = flatten_bio_tags_with_index(bios_label_list)
     conf_matrix = calculate_confusion_matrix(true_labels, predictions, flatten_labels).astype('float') 
-    tensor_image = confusion_matrix_bar_to_tensor(conf_matrix, flatten_labels)
+    conf_matrix_bar = confusion_matrix_bar_to_figure(conf_matrix, flatten_labels)
     report = classification_report(true_labels, predictions, output_dict=True)
     
     f1 = f1_score(true_labels, predictions)
@@ -269,6 +271,9 @@ def compute_metrics(eval_preds, bios_label_list):
         # "report": report,
         # 'confusion_matrix': conf_matrix,
     } 
+    
+    experiment.log_confusion_matrix(matrix=conf_matrix, labels=flatten_labels)
+    experiment.log_figure(conf_matrix_bar)
     
     for report_key, report_value in report.items():
         if isinstance(report_value, dict):
@@ -350,8 +355,8 @@ def main():
         train_dataset = tokenized_datasets["train"]
         eval_dataset = tokenized_datasets["validation"]
         
-        train_dataset = tokenized_datasets["train"].select(range(100))
-        eval_dataset = tokenized_datasets["validation"].select(range(50))
+        train_dataset = tokenized_datasets["train"].select(range(8))
+        eval_dataset = tokenized_datasets["validation"].select(range(8))
         
         trainer = Trainer( 
             model, 
@@ -361,7 +366,7 @@ def main():
             data_collator=data_collator, 
             tokenizer=tokenizer, 
             compute_metrics=lambda x: compute_metrics(
-                x, bios_label_list=label_list,
+                x, bios_label_list=label_list, experiment=exp
             ),
         )    
         
@@ -372,7 +377,7 @@ def main():
     
     # best_metric = trainer.state.best_metric
     
-    # evalulate_metric = trainer.evaluate()
+    # evalulate_metric = trainer.'evaluate()
     
     # if 'eval_confusion_matrix' in evalulate_metric.keys():
     #     conf_matrix = evalulate_metric['eval_confusion_matrix']
