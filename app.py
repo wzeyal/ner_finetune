@@ -302,16 +302,18 @@ def main():
     # You need to specify the algorithm and hyperparameters to use:
     config = {
         # Pick the Bayes algorithm:
-        "algorithm": "bayes",
+        "algorithm": "grid",
 
         # Declare your hyperparameters:
         "parameters": {
-            "x": {"type": "integer", "min": 1, "max": 5},
+            "train_batch_size": {"type": "discrete", "values": [4, 8]},
+            "gradient_accumulation_steps": {"type": "discrete", "values": [4, 8, 16]},
+            "weight_decay": {"type": "discrete", "values": [0, 0.0001]},
         },
 
         # Declare what to optimize, and how:
         "spec": {
-            "maxCombo": 1,
+            "maxCombo": 12,
             "metric": "eval/f1",
             "objective": "maximize",
         },
@@ -333,16 +335,18 @@ def main():
 
         print(torch.cuda.is_available())
         
+        params = exp.params
+        
         args = TrainingArguments( 
             "test-ner",
             evaluation_strategy = "epoch", 
             save_strategy = "epoch",
             learning_rate=2e-5, 
-            per_device_train_batch_size=8,
-            gradient_accumulation_steps=4, 
+            per_device_train_batch_size=params["train_batch_size"],
+            gradient_accumulation_steps=params["gradient_accumulation_steps"],
             per_device_eval_batch_size=4, 
             num_train_epochs=5, 
-            weight_decay=0.01,
+            weight_decay=params["weight_decay"],
             load_best_model_at_end=True,
             metric_for_best_model="f1",
             save_total_limit=3,
@@ -357,10 +361,10 @@ def main():
         
         train_dataset = tokenized_datasets["train"].select(range(8))
         eval_dataset = tokenized_datasets["validation"].select(range(8))
-        
+                
         trainer = Trainer( 
             model, 
-            args, 
+            args,
             train_dataset=train_dataset, 
             eval_dataset=eval_dataset, 
             data_collator=data_collator, 
