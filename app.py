@@ -8,32 +8,24 @@ from transformers import BertTokenizerFast
 from transformers import DataCollatorForTokenClassification 
 from transformers import AutoModelForTokenClassification 
 from transformers import TrainingArguments, Trainer 
+# from torch.utils.tensorboard import SummaryWriter
 import torch
-from torch.utils.tensorboard import SummaryWriter
-from sklearn.metrics import classification_report, confusion_matrix
+from sklearn.metrics import confusion_matrix
 import pandas as pd
 import seaborn as sn
 import matplotlib.pyplot as plt
 import seaborn as sns
-from seqeval.metrics import f1_score, precision_score, recall_score, accuracy_score
+from seqeval.metrics import f1_score, precision_score, recall_score, accuracy_score, classification_report
 from PIL import Image
 from spacy import displacy
 
 
-experiment = comet_ml.Experiment(
-  api_key="NgggnOHlNpfBbDkrtyEDzFRQt",
-  project_name="ner",
-  workspace="wzeyal"
-)
+# experiment = comet_ml.Experiment(
+#   api_key="NgggnOHlNpfBbDkrtyEDzFRQt",
+#   project_name="ner",
+#   workspace="wzeyal"
+# )
 
-writer = SummaryWriter()
-
-def log_to_tensorboard(metrics, step):
-    for key, value in metrics.items():
-        writer.add_scalar(key, value, step)
-        
-def flatten_tags(tags):
-    return [tag[2:] if tag.startswith(("B-", "I-")) else tag for tag in tags]
 
 def flatten_bio_tags_with_index(bio_tags):
   """
@@ -183,7 +175,7 @@ def confusion_matrix_to_tensor(conf_matrix, labels, fmt=",.0f"):
 
     return img_tensor
 
-def confusion_matrix_bar_to_tensor(ner_confusion_matrix, labels):
+def confusion_matrix_bar_to_tensor(ner_confusion_matrix, labels, percentage_threshold=5):
     # Calculate percentages
     total_per_actual = np.sum(ner_confusion_matrix, axis=1)
     percentages = (ner_confusion_matrix.T / total_per_actual).T * 100
@@ -192,7 +184,7 @@ def confusion_matrix_bar_to_tensor(ner_confusion_matrix, labels):
     entities = labels
 
     # Create a horizontal stacked bar plot with percentages
-    fig, ax = plt.subplots(figsize=(10, 8))
+    fig, ax = plt.subplots(figsize=(15, 15))
 
     # Plot the confusion matrix
     bottom = np.zeros(len(entities))
@@ -203,8 +195,8 @@ def confusion_matrix_bar_to_tensor(ner_confusion_matrix, labels):
         # Add labels to each bar if the percentage is above 10%
         for bar, entity_label in zip(bars, entities):
             percentage = percentages[entities.index(entity_label), i]
-            if percentage > 10:
-                bar_label = f"{entities[i]}\n{percentage:.1f}%"
+            if percentage > percentage_threshold:
+                bar_label = f"{entities[i]}\n{percentage:.0f}%"
                 ax.text(bar.get_x() + bar.get_width() / 2, bar.get_y() + bar.get_height() / 2, bar_label,
                         ha='center', va='center', color='white', fontweight='bold')
 
@@ -228,7 +220,7 @@ def confusion_matrix_bar_to_tensor(ner_confusion_matrix, labels):
     return img_tensor
 
 
-def compute_metrics(eval_preds, bios_label_list, epoch, is_calculate_confusion_matrix=True): 
+def compute_metrics(eval_preds, bios_label_list): 
     """
     Function to compute the evaluation metrics for Named Entity Recognition (NER) tasks.
     The function computes precision, recall, F1 score and accuracy.
@@ -257,27 +249,11 @@ def compute_metrics(eval_preds, bios_label_list, epoch, is_calculate_confusion_m
        for prediction, label in zip(pred_logits, labels) 
     ] 
     
-    if is_calculate_confusion_matrix:
-        flatten_labels = flatten_bio_tags_with_index(bios_label_list)
-    
-        conf_matrix = calculate_confusion_matrix(true_labels, predictions, flatten_labels).astype('float') 
-        
-        conf_matrix = np.array([
-        [0., 3., 1., 1., 1.], # "O"
-       [0., 0., 0., 0., 0.],
-       [0., 0., 0., 0., 1.],
-       [0., 0., 0., 0., 0.],
-       [0., 2., 0., 0., 0.]])
-        
-        # # norm_conf = conf_matrix.astype('float') / conf_matrix.sum(axis=1)[:, np.newaxis]
-        # normalized_conf_matrix = conf_matrix / (conf_matrix.sum(axis=0, keepdims=True) + 1e-8)
-        
-        # tensor_image = confusion_matrix_to_tensor(conf_matrix, flatten_labels)
-        # writer.add_image("Confusion Matrix", tensor_image, epoch)
-        
-        # tensor_image = confusion_matrix_to_tensor(normalized_conf_matrix, flatten_labels, ".0%")
-        # writer.add_image("Normalized Matrix", tensor_image, epoch)
-        
+
+    flatten_labels = flatten_bio_tags_with_index(bios_label_list)
+    conf_matrix = calculate_confusion_matrix(true_labels, predictions, flatten_labels).astype('float') 
+    tensor_image = confusion_matrix_bar_to_tensor(conf_matrix, flatten_labels)
+    report = classification_report(true_labels, predictions, output_dict=True)
     
     f1 = f1_score(true_labels, predictions)
     precision = precision_score(true_labels, predictions)
@@ -290,13 +266,23 @@ def compute_metrics(eval_preds, bios_label_list, epoch, is_calculate_confusion_m
         "recall": recall, 
         "f1": f1, 
         "accuracy": accuracy,
+        # "report": report,
         # 'confusion_matrix': conf_matrix,
     } 
     
-    log_to_tensorboard(result, epoch)
-    result['confusion_matrix'] = conf_matrix.tolist()
-    # if 'LOC' in result.keys():
-    # log_to_tensorboard(results['LOC'], epoch)
+    for report_key, report_value in report.items():
+        if isinstance(report_value, dict):
+            for metric_key, metric_value in report_value.items():
+                result[f"{report_key}_{metric_key}"] = metric_value
+        else:
+            result[report_key] = report_value
+    
+    # from pydantic.utils import deep_update
+
+    
+    # result = deep_update(result, report)
+    # result['confusion_matrix'] = conf_matrix.tolist()
+
     return result
 
 
@@ -308,73 +294,105 @@ def main():
     id2label = dict(zip(range(len(label_list)), label_list))
     label2id = {v: k for k, v in id2label.items()}
     
-    tokenizer = BertTokenizerFast.from_pretrained("bert-base-uncased") 
-    tokenized_datasets = conll2003.map(lambda example: tokenize_and_align_labels(example, tokenizer), batched=True)
-    model = AutoModelForTokenClassification.from_pretrained(
-        "bert-base-uncased",
-        num_labels=len(label_list),
-        id2label=id2label, label2id=label2id)
+    # You need to specify the algorithm and hyperparameters to use:
+    config = {
+        # Pick the Bayes algorithm:
+        "algorithm": "bayes",
 
-    print(torch.cuda.is_available())
+        # Declare your hyperparameters:
+        "parameters": {
+            "x": {"type": "integer", "min": 1, "max": 5},
+        },
+
+        # Declare what to optimize, and how:
+        "spec": {
+            "maxCombo": 1,
+            "metric": "eval/f1",
+            "objective": "maximize",
+        },
+    }
     
-    args = TrainingArguments( 
-        "test-ner",
-        evaluation_strategy = "epoch", 
-        save_strategy = "epoch",
-        learning_rate=2e-5, 
-        per_device_train_batch_size=8,
-        gradient_accumulation_steps=4, 
-        per_device_eval_batch_size=4, 
-        num_train_epochs=2, 
-        weight_decay=0.01,
-        report_to="tensorboard",
-        load_best_model_at_end=True,
-        metric_for_best_model="f1",
-    ) 
+    opt = comet_ml.Optimizer(config)
     
-    data_collator = DataCollatorForTokenClassification(tokenizer) 
-    
-    train_dataset = tokenized_datasets["train"]
-    eval_dataset = tokenized_datasets["validation"]
-    
-    train_dataset = tokenized_datasets["train"].select(range(1))
-    eval_dataset = tokenized_datasets["train"].select(range(1))
-    
-    trainer = Trainer( 
-        model, 
-        args, 
-        train_dataset=train_dataset, 
-        eval_dataset=eval_dataset, 
-        data_collator=data_collator, 
-        tokenizer=tokenizer, 
-        compute_metrics=lambda x: compute_metrics(x, bios_label_list=label_list, epoch=trainer.state.epoch),
-    )    
-    
-    trainer.train()
-    
-    best_metric = trainer.state.best_metric
-    
-    evalulate_metric = trainer.evaluate()
-    
-    if 'eval_confusion_matrix' in evalulate_metric.keys():
-        conf_matrix = evalulate_metric['eval_confusion_matrix']
-        conf_matrix = np.array(conf_matrix)
-        normalized_conf_matrix = conf_matrix / (conf_matrix.sum(axis=0, keepdims=True) + 1e-8)
-        print(normalized_conf_matrix)
+    for index, exp in enumerate(opt.get_experiments(
+        project_name="ner")):
+
+        exp.log_text(f"{index}")
+ 
+        tokenizer = BertTokenizerFast.from_pretrained("bert-base-uncased") 
+        tokenized_datasets = conll2003.map(lambda example: tokenize_and_align_labels(example, tokenizer), batched=True)
+        model = AutoModelForTokenClassification.from_pretrained(
+            "bert-base-uncased",
+            num_labels=len(label_list),
+            id2label=id2label, label2id=label2id)
+
+        print(torch.cuda.is_available())
         
-        flatten_labels = flatten_bio_tags_with_index(label_list)
+        args = TrainingArguments( 
+            "test-ner",
+            evaluation_strategy = "epoch", 
+            save_strategy = "epoch",
+            learning_rate=2e-5, 
+            per_device_train_batch_size=8,
+            gradient_accumulation_steps=4, 
+            per_device_eval_batch_size=4, 
+            num_train_epochs=5, 
+            weight_decay=0.01,
+            load_best_model_at_end=True,
+            metric_for_best_model="f1",
+            save_total_limit=3,
+            report_to="tensorboard",
+            logging_strategy="epoch",
+        ) 
         
-        tensor_image = confusion_matrix_to_tensor(conf_matrix, flatten_labels)
-        writer.add_image("Confusion Matrix", tensor_image)
+        data_collator = DataCollatorForTokenClassification(tokenizer) 
         
-        tensor_image = confusion_matrix_to_tensor(normalized_conf_matrix, flatten_labels, ".0%")
-        writer.add_image("Normalized Matrix", tensor_image)
+        train_dataset = tokenized_datasets["train"]
+        eval_dataset = tokenized_datasets["validation"]
         
-        tensor_image = confusion_matrix_bar_to_tensor(conf_matrix, flatten_labels)
-        writer.add_image("Confusion Bar Matrix", tensor_image)
+        train_dataset = tokenized_datasets["train"].select(range(100))
+        eval_dataset = tokenized_datasets["validation"].select(range(50))
         
-        experiment.log_confusion_matrix(matrix=conf_matrix, labels=flatten_labels)
-        experiment.log_confusion_matrix(matrix=normalized_conf_matrix, labels=flatten_labels)
+        trainer = Trainer( 
+            model, 
+            args, 
+            train_dataset=train_dataset, 
+            eval_dataset=eval_dataset, 
+            data_collator=data_collator, 
+            tokenizer=tokenizer, 
+            compute_metrics=lambda x: compute_metrics(
+                x, bios_label_list=label_list,
+            ),
+        )    
+        
+        trainer.train()
+        exp.end()
+    
+    return
+    
+    # best_metric = trainer.state.best_metric
+    
+    # evalulate_metric = trainer.evaluate()
+    
+    # if 'eval_confusion_matrix' in evalulate_metric.keys():
+    #     conf_matrix = evalulate_metric['eval_confusion_matrix']
+    #     conf_matrix = np.array(conf_matrix)
+    #     normalized_conf_matrix = conf_matrix / (conf_matrix.sum(axis=0, keepdims=True) + 1e-8)
+    #     print(normalized_conf_matrix)
+        
+    #     flatten_labels = flatten_bio_tags_with_index(label_list)
+        
+    #     tensor_image = confusion_matrix_to_tensor(conf_matrix, flatten_labels)
+    #     writer.add_image("Confusion Matrix", tensor_image)
+        
+    #     tensor_image = confusion_matrix_to_tensor(normalized_conf_matrix, flatten_labels, ".0%")
+    #     writer.add_image("Normalized Matrix", tensor_image)
+        
+    #     tensor_image = confusion_matrix_bar_to_tensor(conf_matrix, flatten_labels)
+    #     writer.add_image("Confusion Bar Matrix", tensor_image)
+        
+    #     experiment.log_confusion_matrix(matrix=conf_matrix, labels=flatten_labels)
+    #     experiment.log_confusion_matrix(matrix=normalized_conf_matrix, labels=flatten_labels)
         
     from transformers import pipeline
     ner_pipeline = pipeline("ner", model=model, tokenizer=tokenizer, aggregation_strategy="average")
