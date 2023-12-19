@@ -1,4 +1,6 @@
+from datetime import datetime
 import io
+import os
 import comet_ml 
 import json
 import math
@@ -18,6 +20,8 @@ import seaborn as sns
 from seqeval.metrics import f1_score, precision_score, recall_score, accuracy_score, classification_report
 from PIL import Image
 from spacy import displacy
+import shutil
+
 
 
 # experiment = comet_ml.Experiment(
@@ -184,7 +188,10 @@ def confusion_matrix_bar_to_figure(ner_confusion_matrix, labels, percentage_thre
     entities = labels
 
     # Create a horizontal stacked bar plot with percentages
-    fig, ax = plt.subplots(figsize=(15, 15))
+    fig, ax = plt.subplots(figsize=(20, 20))
+    
+    plt.yticks(fontsize=20)
+    plt.xticks(fontsize=20)
 
     # Plot the confusion matrix
     bottom = np.zeros(len(entities))
@@ -194,21 +201,23 @@ def confusion_matrix_bar_to_figure(ner_confusion_matrix, labels, percentage_thre
         
         # Add labels to each bar if the percentage is above 10%
         for bar, entity_label in zip(bars, entities):
+            if entity_label==entities[i]:
+                bar.set_hatch("//")
             percentage = percentages[entities.index(entity_label), i]
             if percentage > percentage_threshold:
                 bar_label = f"{entities[i]}\n{percentage:.0f}%"
                 ax.text(bar.get_x() + bar.get_width() / 2, bar.get_y() + bar.get_height() / 2, bar_label,
-                        ha='center', va='center', color='white', fontweight='bold')
+                        ha='center', va='center', color='white', fontweight='bold', fontsize=20)
 
     # Set labels and ticks
-    ax.set_xlabel('Percentage')
-    ax.set_ylabel('Actual Labels')
+    ax.set_xlabel('Percentage', fontsize=20)
+    ax.set_ylabel('Actual Labels', fontsize=20)
 
     # Set title
     ax.set_title('NER Confusion Matrix - Horizontal Stacked Bar (Percentage)')
 
     # Add legend
-    ax.legend()
+    ax.legend(fontsize=20)
     
     return plt.gcf()
     
@@ -275,6 +284,8 @@ def compute_metrics(eval_preds, bios_label_list, experiment : comet_ml.Experimen
     experiment.log_confusion_matrix(matrix=conf_matrix, labels=flatten_labels)
     experiment.log_figure(conf_matrix_bar)
     
+    experiment.log_text(datetime.now().timestamp())
+    
     for report_key, report_value in report.items():
         if isinstance(report_value, dict):
             for metric_key, metric_value in report_value.items():
@@ -292,6 +303,13 @@ def compute_metrics(eval_preds, bios_label_list, experiment : comet_ml.Experimen
 
 
 def main():
+    
+    
+    output_path = "test-ner"
+    
+    if os.path.exists(output_path):
+        shutil.rmtree(output_path)
+        
     # experiment.log_text("Experiment Name", "test-ner")
     conll2003 = datasets.load_dataset("conll2003") 
     label_list = conll2003["train"].features["ner_tags"].feature.names
@@ -313,7 +331,7 @@ def main():
 
         # Declare what to optimize, and how:
         "spec": {
-            "maxCombo": 12,
+            "maxCombo": 1,
             "metric": "eval/f1",
             "objective": "maximize",
         },
@@ -321,37 +339,40 @@ def main():
     
     opt = comet_ml.Optimizer(config)
     
+    tokenizer = BertTokenizerFast.from_pretrained("bert-base-uncased") 
+    tokenized_datasets = conll2003.map(lambda example: tokenize_and_align_labels(example, tokenizer), batched=True)
+    model = AutoModelForTokenClassification.from_pretrained(
+        "bert-base-uncased",
+        num_labels=len(label_list),
+        id2label=id2label, label2id=label2id)
+    
+    timestamp = datetime.now().timestamp()
+
+    
     for index, exp in enumerate(opt.get_experiments(
         project_name="ner")):
-
-        exp.log_text(f"{index}")
- 
-        tokenizer = BertTokenizerFast.from_pretrained("bert-base-uncased") 
-        tokenized_datasets = conll2003.map(lambda example: tokenize_and_align_labels(example, tokenizer), batched=True)
-        model = AutoModelForTokenClassification.from_pretrained(
-            "bert-base-uncased",
-            num_labels=len(label_list),
-            id2label=id2label, label2id=label2id)
-
-        print(torch.cuda.is_available())
         
+        exp.add_tag(timestamp)
+        exp.set_name(f"{index}")
+
         params = exp.params
         
         args = TrainingArguments( 
-            "test-ner",
-            evaluation_strategy = "epoch", 
+            output_path,
+            evaluation_strategy = "epoch",
             save_strategy = "epoch",
             learning_rate=2e-5, 
             per_device_train_batch_size=params["train_batch_size"],
             gradient_accumulation_steps=params["gradient_accumulation_steps"],
             per_device_eval_batch_size=4, 
-            num_train_epochs=5, 
+            num_train_epochs=15, 
             weight_decay=params["weight_decay"],
             load_best_model_at_end=True,
             metric_for_best_model="f1",
             save_total_limit=3,
             report_to="tensorboard",
-            logging_strategy="epoch",
+            # logging_strategy="epoch",
+            logging_steps=1,
         ) 
         
         data_collator = DataCollatorForTokenClassification(tokenizer) 
@@ -359,7 +380,7 @@ def main():
         train_dataset = tokenized_datasets["train"]
         eval_dataset = tokenized_datasets["validation"]
         
-        train_dataset = tokenized_datasets["train"].select(range(8))
+        train_dataset = tokenized_datasets["train"].select(range(100))
         eval_dataset = tokenized_datasets["validation"].select(range(8))
                 
         trainer = Trainer( 
@@ -370,7 +391,7 @@ def main():
             data_collator=data_collator, 
             tokenizer=tokenizer, 
             compute_metrics=lambda x: compute_metrics(
-                x, bios_label_list=label_list, experiment=exp
+                x, bios_label_list=label_list, experiment=exp,
             ),
         )    
         
