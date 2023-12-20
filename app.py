@@ -188,12 +188,28 @@ def format_number(num):
     return "{:.1f}{}".format(num, 'Y')
 
 def confusion_matrix_bar_to_figure(ner_confusion_matrix, labels, percentage_threshold=0.05):
-    # Calculate percentages
-    total_per_actual = np.sum(ner_confusion_matrix, axis=1)
-    percentages = (ner_confusion_matrix.T / total_per_actual).T
+    
+    ner_confusion_matrix[:, 2] = 0
+    ner_confusion_matrix[2, :] = 0
+    
+    ner_confusion_matrix[:, 3] = 0
+    ner_confusion_matrix[3, :] = 0
+    
+    zero_rows = np.all(ner_confusion_matrix == 0, axis=1)
+    zero_cols = np.all(ner_confusion_matrix == 0, axis=0)
 
-    # Define entities
-    entities = labels
+    # Identify rows and columns where both the row and column are zero
+    zero_rows_and_cols = zero_rows & zero_cols
+
+    # Remove both zero rows and columns
+    filtered_data = np.delete(np.delete(ner_confusion_matrix, np.where(zero_rows_and_cols), axis=0), np.where(zero_rows_and_cols), axis=1)
+    filterd_labels = [label for label, condition in zip(labels, np.logical_not(zero_rows_and_cols)) if condition]
+        
+
+    
+    # Calculate percentages
+    total_per_actual = np.sum(filtered_data, axis=1)
+    percentages = (filtered_data.T / total_per_actual).T
 
     # Create a horizontal stacked bar plot with percentages
     fig, ax = plt.subplots(figsize=(20, 20))
@@ -202,21 +218,21 @@ def confusion_matrix_bar_to_figure(ner_confusion_matrix, labels, percentage_thre
     plt.xticks(fontsize=20)
 
     # Plot the confusion matrix
-    bottom = np.zeros(len(entities))
-    for i, actual_label in enumerate(entities):
-        bars = ax.barh(entities, percentages[:, i], label=actual_label, left=bottom)
+    bottom = np.zeros(len(filterd_labels))
+    for i, actual_label in enumerate(filterd_labels):
+        bars = ax.barh(filterd_labels, percentages[:, i], label=actual_label, left=bottom)
         bottom += percentages[:, i]
         
         # Add labels to each bar if the percentage is above 10%
-        for pred_id, (bar, entity_label) in enumerate(zip(bars, entities)):
-            if entity_label==entities[i]:
+        for pred_id, (bar, entity_label) in enumerate(zip(bars, filterd_labels)):
+            if entity_label==filterd_labels[i]:
                 bar.set_hatch("//")
-            percentage = percentages[entities.index(entity_label), i]
+            percentage = percentages[filterd_labels.index(entity_label), i]
             # nof_entities1 = int(percentage*total_per_actual[i])
-            nof_entities = ner_confusion_matrix[pred_id, i]
+            nof_entities = filtered_data[pred_id, i]
             nof_entities = format_number(nof_entities)
             if percentage > percentage_threshold:
-                bar_label = f"{entities[i]}\n{percentage:.0%}\n{nof_entities}"
+                bar_label = f"{filterd_labels[i]}\n{percentage:.0%}\n{nof_entities}"
                 ax.text(bar.get_x() + bar.get_width() / 2, bar.get_y() + bar.get_height() / 2, bar_label,
                         ha='center', va='center', color='white', fontweight='bold', fontsize=20)
 
@@ -376,7 +392,7 @@ def main():
             per_device_train_batch_size=params["train_batch_size"],
             gradient_accumulation_steps=params["gradient_accumulation_steps"],
             per_device_eval_batch_size=8, 
-            num_train_epochs=15, 
+            num_train_epochs=2, 
             weight_decay=params["weight_decay"],
             load_best_model_at_end=True,
             metric_for_best_model="f1",
@@ -389,8 +405,8 @@ def main():
         train_dataset = tokenized_datasets["train"]
         eval_dataset = tokenized_datasets["validation"]
         
-        # train_dataset = tokenized_datasets["train"].select(range(64))
-        # eval_dataset = tokenized_datasets["train"].select(range(128))
+        train_dataset = tokenized_datasets["train"].select(range(32))
+        eval_dataset = tokenized_datasets["train"].select(range(32))
                 
         trainer = Trainer( 
             model, 
