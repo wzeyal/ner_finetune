@@ -21,7 +21,7 @@ from seqeval.metrics import f1_score, precision_score, recall_score, accuracy_sc
 from PIL import Image
 from spacy import displacy
 import shutil
-
+import random
 
 
 # experiment = comet_ml.Experiment(
@@ -159,7 +159,7 @@ def tokenize_and_align_labels(examples, tokenizer, label_all_tokens=True):
 
 def confusion_matrix_to_tensor(conf_matrix, labels, fmt=",.0f"):
     # fig, _ = plt.subplocalculate_confusion_matrixts()
-    fig = plt.figure(figsize=(10, 10))
+    fig = plt.figure(figsize=(25, 10))
     # im = ax.imshow(conf_matrix, interpolation='nearest', cmap=plt.cm.Blues)
     # fig.colorbar(im)
     sns.set(font_scale=1.2)
@@ -180,20 +180,21 @@ def confusion_matrix_to_tensor(conf_matrix, labels, fmt=",.0f"):
     return img_tensor
 
 def format_number(num): 
+    if num < 1000.0:
+        return int(num)
+    
     for unit in ['', 'K', 'M', 'G', 'T', 'P', 'E', 'Z']:
         if abs(num) < 1000.0:
-            return "{:.1f}{}".format(num, unit)
+            return "{:.2f}{}".format(num, unit)
         num /= 1000.0
 
-    return "{:.1f}{}".format(num, 'Y')
+    return "{:.12}{}".format(num, 'Y')
 
 def confusion_matrix_bar_to_figure(ner_confusion_matrix, labels, percentage_threshold=0.05):
-    
-    ner_confusion_matrix[:, 2] = 0
-    ner_confusion_matrix[2, :] = 0
-    
-    ner_confusion_matrix[:, 3] = 0
-    ner_confusion_matrix[3, :] = 0
+    random_number = random.randint(0, len(labels)-1)
+
+    # ner_confusion_matrix[:, random_number] = 0
+    # ner_confusion_matrix[random_number, :] = 0
     
     zero_rows = np.all(ner_confusion_matrix == 0, axis=1)
     zero_cols = np.all(ner_confusion_matrix == 0, axis=0)
@@ -204,8 +205,6 @@ def confusion_matrix_bar_to_figure(ner_confusion_matrix, labels, percentage_thre
     # Remove both zero rows and columns
     filtered_data = np.delete(np.delete(ner_confusion_matrix, np.where(zero_rows_and_cols), axis=0), np.where(zero_rows_and_cols), axis=1)
     filterd_labels = [label for label, condition in zip(labels, np.logical_not(zero_rows_and_cols)) if condition]
-        
-
     
     # Calculate percentages
     total_per_actual = np.sum(filtered_data, axis=1)
@@ -215,7 +214,7 @@ def confusion_matrix_bar_to_figure(ner_confusion_matrix, labels, percentage_thre
     fig, ax = plt.subplots(figsize=(20, 20))
     
     plt.yticks(fontsize=20)
-    plt.xticks(fontsize=20)
+    plt.xticks([])
 
     # Plot the confusion matrix
     bottom = np.zeros(len(filterd_labels))
@@ -241,10 +240,11 @@ def confusion_matrix_bar_to_figure(ner_confusion_matrix, labels, percentage_thre
     ax.set_ylabel('Actual Labels', fontsize=20)
 
     # Set title
-    ax.set_title('NER Confusion Matrix - Horizontal Stacked Bar (Percentage)')
+    ax.set_title('NER Confusion Matrix - Horizontal Stacked Bar (Percentage)', fontsize=20)
 
     # Add legend
-    ax.legend(fontsize=20)
+    # ax.legend(fontsize=20)
+    plt.legend(loc='upper center', bbox_to_anchor=(0.5, 0.0), ncol=len(filterd_labels), fontsize=20)
     
     return plt.gcf()
     
@@ -311,7 +311,7 @@ def compute_metrics(eval_preds, bios_label_list, experiment : comet_ml.Experimen
     experiment.log_confusion_matrix(matrix=conf_matrix, labels=flatten_labels, epoch=epoch)
     experiment.log_figure(figure_name="Confusion Matrix (%)", figure=conf_matrix_bar, step=epoch)
     
-    experiment.log_text(datetime.now().timestamp())
+    # experiment.log_text(datetime.now().timestamp())
     
     for report_key, report_value in report.items():
         if isinstance(report_value, dict):
@@ -352,7 +352,7 @@ def main():
         # Declare your hyperparameters:
         "parameters": {
             "train_batch_size": {"type": "discrete", "values": [4, 8]},
-            "gradient_accumulation_steps": {"type": "discrete", "values": [4, 8, 16]},
+            "gradient_accumulation_steps": {"type": "discrete", "values": [8, 16, 32]},
             "weight_decay": {"type": "discrete", "values": [0, 0.0001]},
         },
 
@@ -373,15 +373,14 @@ def main():
         num_labels=len(label_list),
         id2label=id2label, label2id=label2id)
     
-    timestamp = datetime.now().timestamp()
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     
-    for index, exp in enumerate(opt.get_experiments(
-        project_name="ner")):
+    for index, exp in enumerate(opt.get_experiments(project_name="ner")):
         
+        exp.set_name(f"{index:03d}")
         exp.add_tag(timestamp)
-        exp.set_name(f"{index}")
-
+        
         params = exp.params
         
         args = TrainingArguments( 
@@ -391,13 +390,16 @@ def main():
             learning_rate=2e-5, 
             per_device_train_batch_size=params["train_batch_size"],
             gradient_accumulation_steps=params["gradient_accumulation_steps"],
-            per_device_eval_batch_size=8, 
-            num_train_epochs=2, 
+            per_device_eval_batch_size=16, 
+            num_train_epochs=15, 
             weight_decay=params["weight_decay"],
             load_best_model_at_end=True,
             metric_for_best_model="f1",
             save_total_limit=3,
             report_to="tensorboard",
+            # auto_find_batch_size=True,
+            fp16=True,
+            
         ) 
         
         data_collator = DataCollatorForTokenClassification(tokenizer) 
@@ -405,8 +407,8 @@ def main():
         train_dataset = tokenized_datasets["train"]
         eval_dataset = tokenized_datasets["validation"]
         
-        train_dataset = tokenized_datasets["train"].select(range(32))
-        eval_dataset = tokenized_datasets["train"].select(range(32))
+        # train_dataset = tokenized_datasets["train"].select(range(128))
+        # eval_dataset = tokenized_datasets["validation"]
                 
         trainer = Trainer( 
             model, 
