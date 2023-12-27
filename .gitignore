@@ -1,3 +1,4 @@
 **/venv*/
 **/runs*/
 test-ner/*
+__pycache__/*
