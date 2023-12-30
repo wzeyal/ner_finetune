@@ -8,7 +8,7 @@ from spacy import displacy
 ner_pipeline = pipeline("ner")
 
 
-def flip_text(text):
+def ner(text):
     ner_results =  ner_pipeline(text, aggregation_strategy="average")
     ents = [
             {
@@ -31,13 +31,23 @@ demo = gr.Blocks()
 with demo:
     gr.Markdown(
         """
-    # Flip Text!
+    # Ner
     Start typing below to see the output.
     """
     )
-    input = gr.Textbox(placeholder="Flip this text")
+    input = gr.Textbox(placeholder="Enter text ...")
     output = gr.HTML()
+    examples=['dsds']
 
-    input.change(fn=flip_text, inputs=input, outputs=output)
+    input.change(fn=ner, inputs=input, outputs=output)
 
-demo.launch(share=True)
+# demo = gr.Interface(
+#     fn=ner,
+#     inputs='text',
+#     outputs='html',
+#     live=True,
+#     examples=['My name is Eyal'],
+#     # layout='vertical',
+# )
+
+demo.launch(share=False)
